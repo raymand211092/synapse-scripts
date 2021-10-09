@@ -8,6 +8,8 @@ port='8008'
 synapse_log='/var/log/matrix-synapse/homeserver.log'
 homeserver_config='/etc/matrix-synapse/homeserver.yaml'
 
+debug=0
+
 # don't bother compressing unless we will save this much:
 min_compression_percent=15
 
@@ -25,6 +27,11 @@ fi
 ts_history="$(date -d-${range} +%s)000"
 ts_media="$(date -d-1month +%s)000"
 
+debug () {
+    if [ "$debug" = 1 ]; then
+        echo $* 1>&2
+    fi
+}
 get_obsolete_rooms () {
     curl --silent -H "Authorization: Bearer $token" \
         "${host}:${port}/_synapse/admin/v1/rooms" \
@@ -63,16 +70,14 @@ purge_history () {
             --header "Authorization: Bearer $token" \
             -d "{ \"delete_local_events\": false, \"purge_up_to_ts\": $ts_history }" \
             "${host}:${port}/_synapse/admin/v1/purge_history/${room_id}")
-        echo $json | jq
+
         if echo $json | grep -q 'purge_id'; then
-            echo "waiting for purge to complete..."
+            debug "waiting for purge to complete..."
             tail -n 0 -f $synapse_log \
                 | sed '/\[purge\] complete/q' > /dev/null
-            echo "purge completed."
+            debug "purge completed."
         fi
     done
-    echo "it is recommended to run VACUUM FULL on the database now"
-    echo "(note: VACUUM FULL requires up to 50% of the disk be available)"
 }
 
 purge_media_cache () {
@@ -91,7 +96,7 @@ compress_state () {
             -r "$room_id" | sed -n '/%/s/.*(\([0-9]*\).[0-9]*%).*/\1/p')
 
         if [ "$repl" -le "$((100 - $min_compression_percent))" ]; then
-            echo "compressing room" $room_id "..."
+            debug "compressing room" $room_id "..."
             psql -q -U 'synapse' -f $sqlf 'synapse'
         fi
         rm $sqlf
