@@ -3,31 +3,43 @@
 # guide: https://levans.fr/shrink-synapse-database.html
 # doc: https://matrix-org.github.io/synapse/develop/admin_api/purge_history_api.html
 
+host='localhost'
+port='8008'
 synapse_log='/var/log/matrix-synapse/homeserver.log'
+homeserver_config='/etc/matrix-synapse/homeserver.yaml'
 
-read -p "synapse admin API access_token: " token
-read -p "history to keep (date range with no spaces, eg 1month, 1day): " range
+# don't bother compressing unless we will save this much:
+min_compression_percent=15
 
-# timestamps are in milliseconds since the epoch
+if test -r /etc/matrix-synapse/access_token ; then
+    token="$(cat /etc/matrix-synapse/access_token)"
+    range="2months"
+    db_password="$(grep '^\s*password: ' $homeserver_config | awk '{print $2}')"
+else
+    # TODO: if standard output is not a tty, exit with failure
+    read -p "synapse admin API access_token: " token
+    read -p "history to keep (date range with no spaces, eg 1month, 1day): " range
+fi
+
+# synapse wants timestamps in milliseconds since the epoch
 ts_history="$(date -d-${range} +%s)000"
 ts_media="$(date -d-1month +%s)000"
 
 get_obsolete_rooms () {
-    tmpf=$(mktemp)
     curl --silent -H "Authorization: Bearer $token" \
-        "localhost:8008/_synapse/admin/v1/rooms" \
+        "${host}:${port}/_synapse/admin/v1/rooms" \
         | jq '.rooms[] | select(.joined_local_members == 0) | .room_id' \
         | sed 's/"//g'
 }
 
 get_synapse_version () {
     curl --silent --ssl -H "Authorization: Bearer $token" \
-        "localhost:8008/_synapse/admin/v1/server_version"
+        "${host}:${port}/_synapse/admin/v1/server_version"
 }
 
 get_all_rooms () {
     curl --silent -H "Authorization: Bearer $token" \
-        "localhost:8008/_synapse/admin/v1/rooms" \
+        "${host}:${port}/_synapse/admin/v1/rooms" \
         | jq '.rooms[].room_id' \
         | sed 's/"//g'
 }
@@ -37,7 +49,7 @@ purge_obsolete_rooms () {
         curl --silent --ssl -X POST --header "Content-Type: application/json" \
             --header "Authorization: Bearer $token" \
             -d "{ \"room_id\": \"$room_id\" }" \
-            "localhost:8008/_synapse/admin/v1/purge_room" \
+            "${host}:${port}/_synapse/admin/v1/purge_room" \
             | jq
     done
 }
@@ -50,7 +62,7 @@ purge_history () {
             --header "Content-Type: application/json" \
             --header "Authorization: Bearer $token" \
             -d "{ \"delete_local_events\": false, \"purge_up_to_ts\": $ts_history }" \
-            "localhost:8008/_synapse/admin/v1/purge_history/${room_id}")
+            "${host}:${port}/_synapse/admin/v1/purge_history/${room_id}")
         echo $json | jq
         if echo $json | grep -q 'purge_id'; then
             echo "waiting for purge to complete..."
@@ -66,10 +78,28 @@ purge_history () {
 purge_media_cache () {
     curl --silent -X POST --ssl \
         --header "Authorization: Bearer $token" -d '' \
-        "localhost:8008/_synapse/admin/v1/purge_media_cache?before_ts=${ts_media}" \
+        "${host}:${port}/_synapse/admin/v1/purge_media_cache?before_ts=${ts_media}" \
         | jq
+}
+
+compress_state () {
+    umask 077
+    for room_id ; do
+        sqlf="/tmp/$(echo $room_id | tr -c -d '[:alpha:]').sql"
+        repl=$(synapse-compress-state -t -o $sqlf -p \
+            "host=${host} user=synapse password=${db_password} dbname=synapse" \
+            -r "$room_id" | sed -n '/%/s/.*(\([0-9]*\).[0-9]*%).*/\1/p')
+
+        if [ "$repl" -le "$((100 - $min_compression_percent))" ]; then
+            echo "compressing room" $room_id "..."
+            psql -q -U 'synapse' -f $sqlf 'synapse'
+        fi
+        rm $sqlf
+    done
 }
 
 purge_obsolete_rooms
 purge_history $(get_all_rooms)
 purge_media_cache
+compress_state $(get_all_rooms)
+psql -q -c "REINDEX DATABASE synapse;" -c "VACUUM FULL;" -d synapse -U synapse
