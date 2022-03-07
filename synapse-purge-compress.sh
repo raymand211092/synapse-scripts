@@ -18,6 +18,7 @@ if test -r /etc/matrix-synapse/access_token ; then
     token="$(cat /etc/matrix-synapse/access_token)"
     range="2months"
     db_password="$(grep '^\s*password: ' $homeserver_config | awk '{print $2}')"
+    db_name="$(grep '^\s*database: ' $homeserver_config | awk '{print $2}')"
 else
     # TODO: if standard output is not a tty, exit with failure
     read -p "synapse admin API access_token: " token
@@ -93,7 +94,7 @@ compress_state () {
     for room_id ; do
         sqlf="/tmp/$(echo $room_id | tr -c -d '[:alpha:]').sql"
         repl=$(synapse-compress-state -t -o $sqlf -p \
-            "host=${host} user=synapse password=${db_password} dbname=synapse" \
+            "host=${host} user=synapse password=${db_password} dbname=${db_name}" \
             -r "$room_id" | sed -n '/%/s/.*(\([0-9]*\).[0-9]*%).*/\1/p')
 
         if [ "$repl" -le "$((100 - $min_compression_percent))" ]; then
