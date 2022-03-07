@@ -7,6 +7,7 @@ host='localhost'
 port='8008'
 synapse_log='/var/log/matrix-synapse/homeserver.log'
 homeserver_config='/etc/matrix-synapse/homeserver.yaml'
+rooms_query_limit=6666
 
 debug=0
 
@@ -46,7 +47,7 @@ get_synapse_version () {
 
 get_all_rooms () {
     curl --silent -H "Authorization: Bearer $token" \
-        "${host}:${port}/_synapse/admin/v1/rooms" \
+        "${host}:${port}/_synapse/admin/v1/rooms?limit=${rooms_query_limit}" \
         | jq '.rooms[].room_id' \
         | sed 's/"//g'
 }
