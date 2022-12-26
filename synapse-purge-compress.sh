@@ -29,9 +29,8 @@ debug () {
 }
 get_obsolete_rooms () {
     curl --silent -H "Authorization: Bearer $token" \
-        "${host}:${port}/_synapse/admin/v1/rooms" \
-        | jq '.rooms[] | select(.joined_local_members == 0) | .room_id' \
-        | sed 's/"//g'
+        "${host}:${port}/_synapse/admin/v1/rooms?limit=${rooms_query_limit}" \
+        | jq -r '.rooms[] | select(.joined_local_members == 0) | .room_id'
 }
 
 get_synapse_version () {
@@ -42,8 +41,7 @@ get_synapse_version () {
 get_all_rooms () {
     curl --silent -H "Authorization: Bearer $token" \
         "${host}:${port}/_synapse/admin/v1/rooms?limit=${rooms_query_limit}" \
-        | jq '.rooms[].room_id' \
-        | sed 's/"//g'
+        | jq -r '.rooms[].room_id'
 }
 
 purge_obsolete_rooms () {
