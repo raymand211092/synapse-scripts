@@ -103,8 +103,10 @@ main () {
 
 if test -r /etc/matrix-synapse/access_token ; then
     token="$(cat /etc/matrix-synapse/access_token)"
+elif ! [ -t 1 ]; then
+    echo "Error: Access token file is not readable and cannot prompt for token." >&2
+    exit 1
 else
-    # TODO: if standard output is not a tty, exit with failure
     read -p "synapse admin API access_token: " token
 fi
 
@@ -113,8 +115,10 @@ if test -r $db_conf_file; then
     db_name="$(grep '^\s*database: ' $db_conf_file | awk '{print $2}')"
     db_user="$(grep '^\s*user: ' $db_conf_file | awk '{print $2}')"
     db_password="$(grep '^\s*password: ' $db_conf_file | awk '{print $2}')"
+elif ! [ -t 1 ]; then
+    echo "Error: Database config file is not readable and cannot prompt for database config." >&2
+    exit 1
 else
-    # TODO: if standard output is not a tty, exit with failure
     read -p "synapse database name: " db_name
     read -p "synapse database user: " db_user
     read -p "synapse database password: " db_password
