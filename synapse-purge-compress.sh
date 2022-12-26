@@ -10,7 +10,8 @@ port='8008'
 synapse_log='/var/log/matrix-synapse/homeserver.log'
 db_conf_file='/etc/matrix-synapse/conf.d/database.yaml'
 rooms_query_limit=6666
-range="2months"
+room_history_range="2months"
+media_range="1month"
 
 debug=0
 
@@ -58,7 +59,7 @@ purge_history () {
         json=$(curl --silent --ssl -X POST \
             --header "Content-Type: application/json" \
             --header "Authorization: Bearer $token" \
-            -d "{ \"delete_local_events\": false, \"purge_up_to_ts\": $ts_history }" \
+            -d "{ \"delete_local_events\": false, \"purge_up_to_ts\": $room_history_range_ts }" \
             "${host}:${port}/_synapse/admin/v1/purge_history/${room_id}")
 
         if echo $json | grep -q 'purge_id'; then
@@ -73,7 +74,7 @@ purge_history () {
 purge_media_cache () {
     curl --silent -X POST --ssl \
         --header "Authorization: Bearer $token" -d '' \
-        "${host}:${port}/_synapse/admin/v1/purge_media_cache?before_ts=${ts_media}" \
+        "${host}:${port}/_synapse/admin/v1/purge_media_cache?before_ts=${media_range_ts}" \
         | jq
 }
 
@@ -91,6 +92,18 @@ compress_state () {
         fi
         rm $sqlf
     done
+}
+main () {
+    echo "Purging obsolete rooms (rooms with no local members)"
+    purge_obsolete_rooms
+    echo "Purging room history older than ${room_history_range}"
+    purge_history $(get_all_rooms)
+    echo "Purging media cache older than ${media_range}"
+    purge_media_cache
+    echo "Compressing room state"
+    compress_state $(get_all_rooms)
+    echo "Reindexing and vacuuming the database"
+    psql -q -c "REINDEX DATABASE synapse;" -c "VACUUM FULL;" -d synapse -U synapse
 }
 
 if test -r /etc/matrix-synapse/access_token ; then
@@ -110,11 +123,7 @@ else
 fi
 
 # synapse wants timestamps in milliseconds since the epoch
-ts_history="$(date -d-${range} +%s)000"
-ts_media="$(date -d-1month +%s)000"
+room_history_range_ts="$(date -d-${room_history_range} +%s)000"
+media_range_ts="$(date -d-${media_range} +%s)000"
 
-purge_obsolete_rooms
-purge_history $(get_all_rooms)
-purge_media_cache
-compress_state $(get_all_rooms)
-psql -q -c "REINDEX DATABASE synapse;" -c "VACUUM FULL;" -d synapse -U synapse
+main
