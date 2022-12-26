@@ -90,6 +90,7 @@ compress_state () {
 main () {
     echo "Purging obsolete rooms (rooms with no local members)"
     purge_obsolete_rooms
+    # FIXME: Only purge large rooms
     echo "Purging room history older than ${room_history_range}"
     purge_history $(get_all_rooms)
     echo "Purging media cache older than ${media_range}"
