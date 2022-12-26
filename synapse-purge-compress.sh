@@ -10,13 +10,17 @@ port='8008'
 synapse_log='/var/log/matrix-synapse/homeserver.log'
 db_conf_file='/etc/matrix-synapse/conf.d/database.yaml'
 rooms_query_limit=6666
+
+# purge parameters:
 room_history_range="2months"
 media_range="1month"
 
+# compression parameters:
+chunk_size=500
+chunks_to_compress=10000
+
 debug=0
 
-# don't bother compressing unless we will save this much:
-min_compression_percent=15
 
 debug () {
     if [ "$debug" = 1 ]; then
@@ -79,20 +83,10 @@ purge_media_cache () {
 }
 
 compress_state () {
-    umask 077
-    for room_id ; do
-        sqlf="/tmp/$(echo $room_id | tr -c -d '[:alpha:]').sql"
-        repl=$(synapse-compress-state -t -o $sqlf -p \
-            "host=${host} user=synapse password=${db_password} dbname=${db_name}" \
-            -r "$room_id" | sed -n '/%/s/.*(\([0-9]*\).[0-9]*%).*/\1/p')
-
-        if [ "$repl" -le "$((100 - $min_compression_percent))" ]; then
-            debug "compressing room" $room_id "..."
-            psql -q -U 'synapse' -f $sqlf 'synapse'
-        fi
-        rm $sqlf
-    done
+    synapse_auto_compressor -c "${chunk_size}" -n "${chunks_to_compress}" \
+        -p "postgresql://${db_user}:${db_password}@${host}/${db_name}"
 }
+
 main () {
     echo "Purging obsolete rooms (rooms with no local members)"
     purge_obsolete_rooms
@@ -101,7 +95,7 @@ main () {
     echo "Purging media cache older than ${media_range}"
     purge_media_cache
     echo "Compressing room state"
-    compress_state $(get_all_rooms)
+    compress_state
     echo "Reindexing and vacuuming the database"
     psql -q -c "REINDEX DATABASE synapse;" -c "VACUUM FULL;" -d synapse -U synapse
 }
@@ -114,11 +108,14 @@ else
 fi
 
 if test -r $db_conf_file; then
-    db_password="$(grep '^\s*password: ' $db_conf_file | awk '{print $2}')"
+    # FIXME: script should abort if these vars are somehow empty
     db_name="$(grep '^\s*database: ' $db_conf_file | awk '{print $2}')"
+    db_user="$(grep '^\s*user: ' $db_conf_file | awk '{print $2}')"
+    db_password="$(grep '^\s*password: ' $db_conf_file | awk '{print $2}')"
 else
     # TODO: if standard output is not a tty, exit with failure
     read -p "synapse database name: " db_name
+    read -p "synapse database user: " db_user
     read -p "synapse database password: " db_password
 fi
 
