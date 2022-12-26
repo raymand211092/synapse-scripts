@@ -1,33 +1,21 @@
 #!/bin/sh
 
+set -e
+
 # guide: https://levans.fr/shrink-synapse-database.html
 # doc: https://matrix-org.github.io/synapse/develop/admin_api/purge_history_api.html
 
 host='localhost'
 port='8008'
 synapse_log='/var/log/matrix-synapse/homeserver.log'
-homeserver_config='/etc/matrix-synapse/homeserver.yaml'
+db_conf_file='/etc/matrix-synapse/conf.d/database.yaml'
 rooms_query_limit=6666
+range="2months"
 
 debug=0
 
 # don't bother compressing unless we will save this much:
 min_compression_percent=15
-
-if test -r /etc/matrix-synapse/access_token ; then
-    token="$(cat /etc/matrix-synapse/access_token)"
-    range="2months"
-    db_password="$(grep '^\s*password: ' $homeserver_config | awk '{print $2}')"
-    db_name="$(grep '^\s*database: ' $homeserver_config | awk '{print $2}')"
-else
-    # TODO: if standard output is not a tty, exit with failure
-    read -p "synapse admin API access_token: " token
-    read -p "history to keep (date range with no spaces, eg 1month, 1day): " range
-fi
-
-# synapse wants timestamps in milliseconds since the epoch
-ts_history="$(date -d-${range} +%s)000"
-ts_media="$(date -d-1month +%s)000"
 
 debug () {
     if [ "$debug" = 1 ]; then
@@ -104,6 +92,26 @@ compress_state () {
         rm $sqlf
     done
 }
+
+if test -r /etc/matrix-synapse/access_token ; then
+    token="$(cat /etc/matrix-synapse/access_token)"
+else
+    # TODO: if standard output is not a tty, exit with failure
+    read -p "synapse admin API access_token: " token
+fi
+
+if test -r $db_conf_file; then
+    db_password="$(grep '^\s*password: ' $db_conf_file | awk '{print $2}')"
+    db_name="$(grep '^\s*database: ' $db_conf_file | awk '{print $2}')"
+else
+    # TODO: if standard output is not a tty, exit with failure
+    read -p "synapse database name: " db_name
+    read -p "synapse database password: " db_password
+fi
+
+# synapse wants timestamps in milliseconds since the epoch
+ts_history="$(date -d-${range} +%s)000"
+ts_media="$(date -d-1month +%s)000"
 
 purge_obsolete_rooms
 purge_history $(get_all_rooms)
